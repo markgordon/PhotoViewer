@@ -1,25 +1,24 @@
 #include <iostream>
 #include "opencv2/opencv.hpp"
-#include "boost/foreach.hpp"
-#include "boost/chrono.hpp"
-#include "boost/thread/thread.hpp"
-#include "boost/atomic.hpp"
 #include <functional>
 #include <chrono>
 #include "signal.h"
-#include <boost/property_tree/ptree.hpp>
-#include <boost/property_tree/json_parser.hpp>
-#include "boost/filesystem.hpp"
+//just use opencv init to avoid boost dependency
+//#include <boost/property_tree/ptree.hpp>
+#//include <boost/property_tree/json_parser.hpp>
 #include <chrono>
+#include <experimental/filesystem>
 using namespace std::chrono;
 using namespace std;
-namespace fs=boost::filesystem;
+namespace fs=std::experimental::filesystem::v1;
 
-pthread_t thread;
-int key={0};
-boost::mutex key_lock;
-bool paused = false;
-std::vector<std::string> getFileList(const std::string &dirPath, 	const std::vector<std::string> dirSkipList = { })
+static pthread_t thread;
+static int key={0};
+static std::mutex key_lock;
+static bool paused = false;
+//boost example, ignoring skip dirs b/c c++17 with gcc doesn't have no_push()
+std::vector<std::string> getFileList(const std::string &dirPath,
+                                     const std::vector<std::string> dirSkipList = { })
 {
 
     // Create a vector of string
@@ -43,13 +42,14 @@ std::vector<std::string> getFileList(const std::string &dirPath, 	const std::vec
                 {
                     // Skip the iteration of current directory pointed by iteraton
                     // Boost Fileystsem  API to skip current directory iteration
-                    iter.no_push();
+                    //iter.no_push();
 
                 }
                 else
                 {
                     // Add the name in vector
                     std::string filename = iter->path().string();
+                    //only get pictures, one day list in json init
                     if(filename.compare(filename.size()-3,3,"jpg")==0
                             || filename.compare(filename.size()-3,3,"bmp" )==0
                             || filename.compare(filename.size()-3,3,"png" )==0
@@ -74,6 +74,7 @@ std::vector<std::string> getFileList(const std::string &dirPath, 	const std::vec
 int handle_key(int keypress,size_t & position,std::vector<std::string> & images,
                cv::Mat & img,size_t lastshown){
     int retval=-1;
+    //key codes if keyboard is used
     const int STOP_KEY = 32;
     const int SKIP_FORWARD = 83;
     const int SKIP_BACK  = 81;
@@ -124,27 +125,21 @@ int main(int argc, char *argv[])
 {
     const std::string keys =
         "{help h usage ? |      | print this message   }"
-        "{names   n     |   /home/mark/cfg/obj.names   | files for names   }"
-        "{config   c     | /home/mark/cfg/yolo-obj.cfg | config file   }"
-        "{weights   w     | /home/mark/cfg/yolo-obj_10000.weights     | weights  }"
-        "{path  p         | /srv/ftp/ftp/  | path to save files   }"
-        "{image i           |  | image to analyze }"
-        "{uid   u         | admin  | admin id for cam}"
-        "{pwd            | newpw111 | pwd for cam }"
-        "{thresh t            | .5 | threshold }"
-        "{disabled d            | 1 | shooter Disabled }"
-        "{debug b            | 0 | debug log }"
-        "{init               |  | config file}"
+        "{path p            | /data/pictures | picture path }"
+        "{delay d            | 5000 | inter pic delay in ms }"
+        "{debug b            | 0 | debug level }"
+        "{init               |  | json config file}"
         ;
     std::cout << (cv::getBuildInformation());
     cv::CommandLineParser parser(argc,argv,keys);
     std::string init = parser.get<std::string>("init");
-    boost::property_tree::ptree pt1;
-    boost::property_tree::read_json(init, pt1);
+    auto path=parser.get<std::string>("path");
+    auto delay=parser.get<int>("delay");
+    //boost::property_tree::ptree pt1;
+    //boost::property_tree::read_json(init, pt1);
     //delay in milliseconds
-    int imageSaveLevel=0,loglevel=0;
-    auto path = pt1.get<std::string>("path");
-    auto delay = pt1.get<int>("delay");
+   // auto path = pt1.get<std::string>("path");
+   // auto delay = pt1.get<int>("delay");
     cv::namedWindow("window", cv::WND_PROP_FULLSCREEN);
     cv::setWindowProperty("window",cv::WND_PROP_FULLSCREEN,cv::WINDOW_FULLSCREEN);
     //loop and display
