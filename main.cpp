@@ -5,17 +5,27 @@
 #include "signal.h"
 //just use opencv init to avoid boost dependency
 //#include <boost/property_tree/ptree.hpp>
-#//include <boost/property_tree/json_parser.hpp>
+//include <boost/property_tree/json_parser.hpp>
 #include <chrono>
 #include <experimental/filesystem>
+#include "termios.h"
+#include <thread>
+#include "unistd.h"
 using namespace std::chrono;
 using namespace std;
 namespace fs=std::experimental::filesystem::v1;
 
-static pthread_t thread;
 static int key={0};
 static std::mutex key_lock;
 static bool paused = false;
+bool isequals(const string& a, const string& b)
+{
+    return std::equal(a.begin(), a.end(),
+                      b.begin(), b.end(),
+                      [](char a, char b) {
+                          return tolower(a) == tolower(b);
+                      });
+}
 //boost example, ignoring skip dirs b/c c++17 with gcc doesn't have no_push()
 std::vector<std::string> getFileList(const std::string &dirPath,
                                      const std::vector<std::string> dirSkipList = { })
@@ -50,10 +60,14 @@ std::vector<std::string> getFileList(const std::string &dirPath,
                     // Add the name in vector
                     std::string filename = iter->path().string();
                     //only get pictures, one day list in json init
-                    if(filename.compare(filename.size()-3,3,"jpg")==0
-                            || filename.compare(filename.size()-3,3,"bmp" )==0
-                            || filename.compare(filename.size()-3,3,"png" )==0
-                            || filename.compare(filename.size()-3,3,"gif" )==0)
+                    if(    isequals(filename.substr(filename.size()-3,3),"jpg")==0 ||
+                            isequals(filename.substr(filename.size()-3,3),"bmp")==0 ||
+                            isequals(filename.substr(filename.size()-3,3),"png")==0 ||
+                            isequals(filename.substr(filename.size()-4,4),"tiff")==0 ||
+                            isequals(filename.substr(filename.size()-3,3),"tif")==0 ||
+                            isequals(filename.substr(filename.size()-3,3),"gif")==0 ||
+                            isequals(filename.substr(filename.size()-4,4),"jpeg")==0
+                           )
                      {
                     listOfFiles.push_back(filename);
                     }
@@ -75,10 +89,14 @@ int handle_key(int keypress,size_t & position,std::vector<std::string> & images,
                cv::Mat & img,size_t lastshown){
     int retval=-1;
     //key codes if keyboard is used
-    const int STOP_KEY = 32;
+    const int STOP_KEY = 13;
     const int SKIP_FORWARD = 83;
     const int SKIP_BACK  = 81;
-    if(keypress !=0)std::cout << keypress << std::endl;
+    const int QUIT = 27;
+    if(keypress >0){
+        std::cout << std::setprecision(5)<< std::setw(5)
+                              <<std::to_string(keypress) << std::endl;
+    }
     switch(keypress){
 
         case SKIP_FORWARD: //skip next images
@@ -99,12 +117,19 @@ int handle_key(int keypress,size_t & position,std::vector<std::string> & images,
             paused = !paused;
             while(paused){
                 keypress = cv::waitKey(0);
+                key_lock.lock();
+                keypress = key;
+                key=0;
+                key_lock.unlock();
                 if( handle_key(keypress,position,images,img,lastshown)==-1)cv::imshow("window", img);
             }
         break;
+        case 27:
+            exit(0);
         default://load next image, let it be shown on next loop
             position++;
             if(position >= images.size())position=0;
+       //     std::cout << images[position] << endl;
             img = cv::imread((images)[position]);
             retval=0;
             break;
@@ -115,19 +140,31 @@ int handle_key(int keypress,size_t & position,std::vector<std::string> & images,
 static void* callback()
 {
     while(true){
-        int keypress = cv::waitKey(0);
+        timeval timeout;
+        fd_set rdset;
+
+        FD_ZERO(&rdset);
+        FD_SET(STDIN_FILENO, &rdset);
+        timeout.tv_sec  = 0;
+        timeout.tv_usec = 0;
         key_lock.lock();
-        key = keypress;
+        key =  select(STDIN_FILENO + 1, &rdset, NULL, NULL, &timeout);
         key_lock.unlock();
     }
 }
 int main(int argc, char *argv[])
 {
+    std::thread shooter(callback);
+    shooter.detach();
+    int i=0;
+    i++;
     const std::string keys =
         "{help h usage ? |      | print this message   }"
-        "{path p            | /data/pictures | picture path }"
+        "{path p            | /data/Pictures | picture path }"
         "{delay d            | 5000 | inter pic delay in ms }"
         "{debug b            | 0 | debug level }"
+        "{hor h     | 1920 | horizontal resolution } "
+        "{vert v     | 1200 | vertical resolution } "
         "{init               |  | json config file}"
         ;
     std::cout << (cv::getBuildInformation());
@@ -135,27 +172,36 @@ int main(int argc, char *argv[])
     std::string init = parser.get<std::string>("init");
     auto path=parser.get<std::string>("path");
     auto delay=parser.get<int>("delay");
+    auto hor=parser.get<int>("hor");
+    auto vert=parser.get<int>("vert");
     //boost::property_tree::ptree pt1;
     //boost::property_tree::read_json(init, pt1);
     //delay in milliseconds
    // auto path = pt1.get<std::string>("path");
    // auto delay = pt1.get<int>("delay");
-    cv::namedWindow("window", cv::WND_PROP_FULLSCREEN);
-    cv::setWindowProperty("window",cv::WND_PROP_FULLSCREEN,cv::WINDOW_FULLSCREEN);
+//    cv::namedWindow("win", cv::WINDOW_NORMAL);
+//    cv::setWindowProperty("win", cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
     //loop and display
     auto images = getFileList(path);
     int keypress = 0;
     cv::Mat img;
     if(!images.empty()){
         img = cv::imread(images[0]);
+       // std::cout << images[0];
         size_t pos=0,lastshown=0;
         while(true){
-            cv::imshow("window", img);
+            cv::Mat newimg;
+            auto org_size = img.size();
+            if(org_size.width > hor && org_size.height > vert){
+                auto hor_ratio = (float)org_size.width/hor;
+                auto vert_ratio = (float)org_size.height/vert;
+                float resize_ratio=0;
+                hor_ratio > vert_ratio?resize_ratio = hor_ratio:resize_ratio=vert_ratio;
+                cv::resize(img,newimg,cv::Size(org_size.width/resize_ratio,org_size.height/resize_ratio),0,0,cv::INTER_LANCZOS4);
+            }
+ //           cv::imshow("win", newimg);
             lastshown = pos;
             keypress = cv::waitKey(1);
-            key_lock.lock();
-            key = keypress;
-            key_lock.unlock();
             auto start = std::chrono::system_clock::now();
             key_lock.lock();
             keypress = key;
