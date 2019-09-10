@@ -11,4 +11,8 @@ LIBS += -L/usr/lib -L/usr/local/lib -lopencv_world -pthread
 LIBS += -lstdc++fs
 
 SOURCES += \
-        main.cpp
+        main.cpp \
+    exif.cpp
+
+HEADERS += \
+    exif.h

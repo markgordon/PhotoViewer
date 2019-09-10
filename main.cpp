@@ -1,4 +1,5 @@
 #include <iostream>
+#include <fstream>
 #include "opencv2/opencv.hpp"
 #include <functional>
 #include <chrono>
@@ -8,9 +9,24 @@
 //include <boost/property_tree/json_parser.hpp>
 #include <chrono>
 #include <experimental/filesystem>
+#include <random>
 #include "termios.h"
 #include <thread>
 #include "unistd.h"
+#include "exif.h"
+#include <sys/stat.h>
+//use to determine if opencv is going to fix for us
+enum ImageOrientation
+{
+    IMAGE_ORIENTATION_NORM = 1,//Dc
+    IMAGE_ORIENTATION_MIRROR_HORIZONTAL = 2,//DC
+    IMAGE_ORIENTATION_180 = 3,//DC
+    IMAGE_ORIENTATION_MIRROR_VERTICAL = 4,//DC
+    IMAGE_ORIENTATION_MIRHOR_R270 = 5,//SWITCH
+    IMAGE_ORIENTATION_ROT90 = 6,//SWITCH
+    IMAGE_ORIENTATION_MIRHOR_R90 = 7,//SWITCH
+    IMAGE_ORIENTATION_ROT270 = 8//SWITCH
+};
 using namespace std::chrono;
 using namespace std;
 namespace fs=std::experimental::filesystem::v1;
@@ -26,6 +42,7 @@ bool isequals(const string& a, const string& b)
                           return tolower(a) == tolower(b);
                       });
 }
+static int nested={0};
 //boost example, ignoring skip dirs b/c c++17 with gcc doesn't have no_push()
 std::vector<std::string> getFileList(const std::string &dirPath,
                                      const std::vector<std::string> dirSkipList = { })
@@ -59,18 +76,7 @@ std::vector<std::string> getFileList(const std::string &dirPath,
                 {
                     // Add the name in vector
                     std::string filename = iter->path().string();
-                    //only get pictures, one day list in json init
-                    if(    isequals(filename.substr(filename.size()-3,3),"jpg")==0 ||
-                            isequals(filename.substr(filename.size()-3,3),"bmp")==0 ||
-                            isequals(filename.substr(filename.size()-3,3),"png")==0 ||
-                            isequals(filename.substr(filename.size()-4,4),"tiff")==0 ||
-                            isequals(filename.substr(filename.size()-3,3),"tif")==0 ||
-                            isequals(filename.substr(filename.size()-3,3),"gif")==0 ||
-                            isequals(filename.substr(filename.size()-4,4),"jpeg")==0
-                           )
-                     {
                     listOfFiles.push_back(filename);
-                    }
                 }
                 // Increment the iterator to point to next entry in recursive iteration
                 iter++;
@@ -81,12 +87,54 @@ std::vector<std::string> getFileList(const std::string &dirPath,
     {
         std::cerr << "Exception :: " << e.what();
     }
-    std::random_shuffle(listOfFiles.begin(),listOfFiles.end());
+   // std::random_shuffle(listOfFiles.begin(),listOfFiles.end());
     return listOfFiles;
 }
+bool get_next_media(cv::Mat & img,
+                    const std::vector<std::string> & images,
+                    const std::vector<size_t> & indexes,
+                    size_t & curPos,
+                    int move)
+{
+    //only get pictures, one day list in json init
+ //Standard mersenne_twister_engine seeded with rd()
+    curPos+= move;
+    if(curPos >= indexes.size()){
+        move < 0? curPos = indexes.size()-1:curPos=0;
+    }
+    size_t file_index = indexes[curPos];
+    while(!
+        (isequals(images[file_index].substr(images[file_index].size()-3,3),"jpg") ||
+            isequals(images[file_index].substr(images[file_index].size()-3,3),"bmp") ||
+            isequals(images[file_index].substr(images[file_index].size()-3,3),"png") ||
+            isequals(images[file_index].substr(images[file_index].size()-4,4),"tiff") ||
+            isequals(images[file_index].substr(images[file_index].size()-3,3),"tif") ||
+            isequals(images[file_index].substr(images[file_index].size()-3,3),"gif") ||
+            isequals(images[file_index].substr(images[file_index].size()-4,4),"jpeg"))
+           )
+     {
+        curPos+=move;
+        if(curPos >= indexes.size()){
+            move < 0? curPos = indexes.size()-1:curPos=0;
+        }
+        file_index = indexes[curPos];
+    }
+    img =  cv::imread(images[file_index]);
 
-int handle_key(int keypress,size_t & position,std::vector<std::string> & images,
-               cv::Mat & img,size_t lastshown){
+    return true;
+}
+bool generate_randoms(std::vector<size_t> & rnds, size_t max){
+    std::random_device rd;  //Will be used to obtain a seed for the random number engine
+    std::mt19937 gen(rd()); //Standard mersenne_twister_engine seeded with rd()
+     std::uniform_int_distribution<unsigned int> dis(0, max);
+    for(size_t i=0;i< max;i++){
+        rnds.push_back(dis(gen));
+    }
+}
+int handle_key(int keypress,size_t & pos,
+               std::vector<std::string> & images,
+               std::vector<size_t> indexes,
+               cv::Mat & img,size_t & lastshown){
     int retval=-1;
     //key codes if keyboard is used
     const int STOP_KEY = 13;
@@ -94,22 +142,21 @@ int handle_key(int keypress,size_t & position,std::vector<std::string> & images,
     const int SKIP_BACK  = 81;
     const int QUIT = 27;
     if(keypress >0){
-        std::cout << std::setprecision(5)<< std::setw(5)
-                              <<std::to_string(keypress) << std::endl;
+//        std::cout << std::setprecision(5)<< std::setw(5)
+//                              <<std::to_string(keypress) << std::endl;
     }
+    nested++;
     switch(keypress){
 
         case SKIP_FORWARD: //skip next images
-            if((position)<=images.size()) (position) = lastshown+1;
-            else position=0;
-            img = cv::imread((images)[position]);
+            get_next_media(img,images,indexes,lastshown,1);
+            pos=lastshown;
             //if we are paused, wait for another key
             if(!paused) retval = -1;
             break;
         case SKIP_BACK: //back one
-            position = lastshown-1;
-            if((position) >= images.size())position = images.size()-1;
-            img = cv::imread((images)[(position)]);
+            get_next_media(img,images,indexes,lastshown,-1);
+            pos=lastshown;
             //if we are paused, wait for another key
             if(paused) retval = -1;
             break;
@@ -121,19 +168,19 @@ int handle_key(int keypress,size_t & position,std::vector<std::string> & images,
                 keypress = key;
                 key=0;
                 key_lock.unlock();
-                if( handle_key(keypress,position,images,img,lastshown)==-1)cv::imshow("window", img);
+                nested++;
+                if(nested > 100)std::cout << "way nest" << nested << std::endl;
+                if( handle_key(keypress,pos,images,indexes,img,lastshown)==-1)cv::imshow("window", img);
             }
         break;
         case 27:
             exit(0);
         default://load next image, let it be shown on next loop
-            position++;
-            if(position >= images.size())position=0;
-       //     std::cout << images[position] << endl;
-            img = cv::imread((images)[position]);
+            get_next_media(img,images,indexes,pos,1);
             retval=0;
             break;
     }
+    nested--;
     return retval;
 }
 
@@ -145,17 +192,24 @@ static void* callback()
 
         FD_ZERO(&rdset);
         FD_SET(STDIN_FILENO, &rdset);
-        timeout.tv_sec  = 0;
-        timeout.tv_usec = 0;
+        timeout.tv_sec  = 5000;
+        timeout.tv_usec = 5000;
         key_lock.lock();
-        key =  select(STDIN_FILENO + 1, &rdset, NULL, NULL, &timeout);
+        key =  select(STDIN_FILENO + 1, &rdset, nullptr, nullptr, &timeout);
         key_lock.unlock();
     }
 }
+long get_file_size(std::string filename)
+{
+    struct stat stat_buf;
+    int rc = stat(filename.c_str(), &stat_buf);
+    return rc == 0 ? stat_buf.st_size : -1;
+}
 int main(int argc, char *argv[])
 {
-    std::thread shooter(callback);
-    shooter.detach();
+    //std::thread shooter(callback);
+    std::vector<size_t> indexes;
+    //shooter.detach();
     int i=0;
     i++;
     const std::string keys =
@@ -172,42 +226,84 @@ int main(int argc, char *argv[])
     std::string init = parser.get<std::string>("init");
     auto path=parser.get<std::string>("path");
     auto delay=parser.get<int>("delay");
-    auto hor=parser.get<int>("hor");
-    auto vert=parser.get<int>("vert");
+    const auto screen_width=parser.get<int>("hor");
+    const auto screen_height=parser.get<int>("vert");
     //boost::property_tree::ptree pt1;
     //boost::property_tree::read_json(init, pt1);
     //delay in milliseconds
    // auto path = pt1.get<std::string>("path");
    // auto delay = pt1.get<int>("delay");
-//    cv::namedWindow("win", cv::WINDOW_NORMAL);
-//    cv::setWindowProperty("win", cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
+    cv::namedWindow("win", cv::WINDOW_NORMAL);
+    cv::setWindowProperty("win", cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
     //loop and display
     auto images = getFileList(path);
+    std::cout << "Got " << images.size() << "files." << std::endl;
     int keypress = 0;
     cv::Mat img;
     if(!images.empty()){
-        img = cv::imread(images[0]);
+        //load up and ordered random list
+        generate_randoms(indexes,images.size());
+         size_t pos=0,lastshown=0;
+        get_next_media(img,images,indexes,pos,1);
+        lastshown = pos;
        // std::cout << images[0];
-        size_t pos=0,lastshown=0;
         while(true){
             cv::Mat newimg;
             auto org_size = img.size();
-            if(org_size.width > hor && org_size.height > vert){
-                auto hor_ratio = (float)org_size.width/hor;
-                auto vert_ratio = (float)org_size.height/vert;
-                float resize_ratio=0;
-                hor_ratio > vert_ratio?resize_ratio = hor_ratio:resize_ratio=vert_ratio;
-                cv::resize(img,newimg,cv::Size(org_size.width/resize_ratio,org_size.height/resize_ratio),0,0,cv::INTER_LANCZOS4);
+            int tops=0,sides=0;
+            if(org_size.width > screen_width || org_size.height > screen_height){
+                double hor_ratio=1.0,vert_ratio=1.0;
+                int newh =screen_height,neww=screen_width;
+                double resize_ratio=1;
+                easyexif::EXIFInfo result;
+                ifstream inf( images[indexes[pos]].c_str() );
+                bool swap= false;
+                if( inf )
+                {
+                        unsigned char mDataBuffer[ 400048 ];
+                        inf.read( (char*)( &mDataBuffer[0] ), 200048 ) ;
+                        if(result.parseFrom(mDataBuffer,
+                                            200048 )!= PARSE_EXIF_ERROR_NO_JPEG){
+                            if(result.Orientation > 4 ){
+                          //      std::swap(neww,newh);
+                                swap=~swap;
+                                std::cout << "swapping" << std::endl;
+                            }
+                        }
+                        hor_ratio = (double)org_size.width/neww;
+                        vert_ratio = (double)org_size.height/newh;
+                        if(hor_ratio > vert_ratio){
+                            resize_ratio = hor_ratio;
+                        }else{
+                            resize_ratio= vert_ratio;
+                        }
+                        cv::resize(img,newimg,cv::Size(org_size.width/resize_ratio,org_size.height/resize_ratio),0,0,cv::INTER_LANCZOS4);
+                        sides = (neww - newimg.size().width)/2;
+                        tops = (newh - newimg.size().height)/2;
+                }
+            }else{
+                newimg = img;
+                sides = (screen_width - newimg.size().width)/2;
+                tops = (screen_height - newimg.size().height)/2;
+
             }
- //           cv::imshow("win", newimg);
+            //lazy bit so we can use high gui and still have a black background
+            cv::Mat borderimg;
+            cv::Scalar col(0,0,0);
+            if(tops<0)tops=0;
+            if(sides<0)sides =0;
+            cv::copyMakeBorder(newimg,borderimg, tops, tops, sides, sides,cv::BORDER_CONSTANT,col);
+            cv::imshow("win", borderimg);
             lastshown = pos;
             keypress = cv::waitKey(1);
-            auto start = std::chrono::system_clock::now();
-            key_lock.lock();
+             auto start = std::chrono::system_clock::now();
+            key_lock.lock();   // auto path = pt1.get<std::string>("path");
+            // auto delay = pt1.get<int>("delay");
+
             keypress = key;
             key=0;
             key_lock.unlock();
-             if(handle_key(keypress,pos,images,img,lastshown)==-1) continue;
+             if(handle_key(keypress,pos,images,indexes,img,lastshown)==-1) continue;
             auto finish = std::chrono::duration_cast<std::chrono::milliseconds> (std::chrono::system_clock::now() - start);
             if(delay-finish.count()> 0){
                 keypress = cv::waitKey(delay-finish.count());
@@ -217,7 +313,7 @@ int main(int argc, char *argv[])
                 key=0;
                 key_lock.unlock();
             }
-            if(keypress!=0) handle_key(keypress,pos,images,img,lastshown);
+            if(keypress!=0) handle_key(keypress,pos,images,indexes,img,lastshown);
 
         }
     }
