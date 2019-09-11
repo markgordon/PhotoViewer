@@ -163,15 +163,8 @@ int handle_key(int keypress,size_t & pos,
         case STOP_KEY: //toggle pause play
             paused = !paused;
             while(paused){
-                keypress = cv::waitKey(0);
-                key_lock.lock();
-                keypress = key;
-                key=0;
-                key_lock.unlock();
-                nested++;
-                if(nested > 100)std::cout << "way nest" << nested << std::endl;
-                if( handle_key(keypress,pos,images,indexes,img,lastshown)==-1)cv::imshow("window", img);
-            }
+                keypress = cv::waitKey(7000);
+			}
         break;
         case 27:
             exit(0);
@@ -313,7 +306,7 @@ int main(int argc, char *argv[])
                 key=0;
                 key_lock.unlock();
             }
-            if(keypress!=0) handle_key(keypress,pos,images,indexes,img,lastshown);
+            if(keypress!=-1) handle_key(keypress,pos,images,indexes,img,lastshown);
 
         }
     }
