@@ -152,19 +152,19 @@ int handle_key(int keypress,size_t & pos,
             get_next_media(img,images,indexes,lastshown,1);
             pos=lastshown;
             //if we are paused, wait for another key
-            if(!paused) retval = -1;
+             retval = -1;
             break;
         case SKIP_BACK: //back one
             get_next_media(img,images,indexes,lastshown,-1);
             pos=lastshown;
             //if we are paused, wait for another key
-            if(paused) retval = -1;
+             retval = -1;
             break;
         case STOP_KEY: //toggle pause play
-            paused = !paused;
-            while(paused){
-                keypress = cv::waitKey(7000);
-			}
+           // paused = !paused;
+            //while(paused){
+                keypress = cv::waitKey(0);
+        //		}
         break;
         case 27:
             exit(0);
@@ -208,7 +208,7 @@ int main(int argc, char *argv[])
     const std::string keys =
         "{help h usage ? |      | print this message   }"
         "{path p            | /data/Pictures | picture path }"
-        "{delay d            | 5000 | inter pic delay in ms }"
+        "{delay d            | 7000 | inter pic delay in ms }"
         "{debug b            | 0 | debug level }"
         "{hor h     | 1920 | horizontal resolution } "
         "{vert v     | 1200 | vertical resolution } "
