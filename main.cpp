@@ -163,7 +163,8 @@ int handle_key(int keypress,size_t & pos,
         case STOP_KEY: //toggle pause play
            // paused = !paused;
             //while(paused){
-                keypress = cv::waitKey(0);
+                cv::waitKey(0);
+                key = keypress = 0;
         //		}
         break;
         case 27:
